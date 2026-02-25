@@ -27,15 +27,15 @@ export const offlineService = {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return [];
     const actions: OfflineAction[] = JSON.parse(stored);
-    
+
     // Filter out actions older than 4 hours
     const now = Date.now();
     const validActions = actions.filter(a => now - a.timestamp <= FOUR_HOURS);
-    
+
     if (validActions.length !== actions.length) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(validActions));
     }
-    
+
     return validActions;
   },
 
@@ -45,7 +45,7 @@ export const offlineService = {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
   },
 
-  sync: async (token: string) => {
+  sync: async () => {
     const actions = offlineService.getActions();
     if (actions.length === 0) return;
 
@@ -54,8 +54,8 @@ export const offlineService = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
+        credentials: 'include',
         body: JSON.stringify({ actions }),
       });
 
@@ -64,7 +64,7 @@ export const offlineService = {
         const successfulIds = data.results
           .filter((r: any) => r.status === 'success' || r.status === 'expired')
           .map((r: any) => r.action.id);
-        
+
         offlineService.clearActions(successfulIds);
         return data;
       }

@@ -2,176 +2,202 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import Database from 'better-sqlite3';
+import pg from 'pg';
+const { Pool } = pg;
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import axios from 'axios';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
 
-dotenv.config();
+if (!process.env.JWT_SECRET) {
+  console.error('CRITICAL: JWT_SECRET is not defined in environment variables.');
+  process.exit(1);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database('school.db');
-const JWT_SECRET = process.env.JWT_SECRET || 'school-secret-123';
+const pool = new Pool({
+  connectionString: process.env.DB_URL,
+});
+const JWT_SECRET = process.env.JWT_SECRET!;
+
+// Simple Production Logger
+const logger = {
+  info: (msg: string) => {
+    const entry = `[${new Date().toISOString()}] INFO: ${msg}\n`;
+    console.log(entry.trim());
+    if (process.env.NODE_ENV === 'production') {
+      try { path.join(__dirname, 'logs', 'app.log'); } catch (e) { } // For future use
+    }
+  },
+  error: (msg: string, err?: any) => {
+    const entry = `[${new Date().toISOString()}] ERROR: ${msg} ${err ? (err.stack || JSON.stringify(err)) : ''}\n`;
+    console.error(entry.trim());
+  }
+};
+
+// Graceful Shutdown
+const shutdown = async () => {
+  logger.info('Shutting down server...');
+  await pool.end();
+  logger.info('Database connection pool closed.');
+  process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 // Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS schools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+const initDB = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schools (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS roles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL
-  );
+    CREATE TABLE IF NOT EXISTS roles (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL
+    );
 
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    full_name TEXT NOT NULL,
-    role_id INTEGER,
-    email TEXT UNIQUE,
-    phone TEXT,
-    school_id INTEGER,
-    FOREIGN KEY (role_id) REFERENCES roles(id),
-    FOREIGN KEY (school_id) REFERENCES schools(id)
-  );
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      role_id INTEGER REFERENCES roles(id),
+      email TEXT UNIQUE,
+      phone TEXT,
+      school_id INTEGER REFERENCES schools(id)
+    );
 
-  CREATE TABLE IF NOT EXISTS students (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER UNIQUE,
-    parent_id INTEGER,
-    grade_level TEXT,
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (parent_id) REFERENCES users(id)
-  );
+    CREATE TABLE IF NOT EXISTS students (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER UNIQUE REFERENCES users(id),
+      parent_id INTEGER REFERENCES users(id),
+      grade_level TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS teachers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER UNIQUE,
-    subject TEXT,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
+    CREATE TABLE IF NOT EXISTS teachers (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER UNIQUE REFERENCES users(id),
+      subject TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id INTEGER,
-    date TEXT NOT NULL,
-    status TEXT CHECK(status IN ('present', 'absent', 'late')) NOT NULL,
-    teacher_id INTEGER,
-    FOREIGN KEY (student_id) REFERENCES students(id),
-    FOREIGN KEY (teacher_id) REFERENCES users(id)
-  );
+    CREATE TABLE IF NOT EXISTS attendance (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER REFERENCES students(id),
+      date TEXT NOT NULL,
+      status TEXT CHECK(status IN ('present', 'absent', 'late')) NOT NULL,
+      teacher_id INTEGER REFERENCES users(id),
+      school_id INTEGER REFERENCES schools(id)
+    );
 
-  CREATE TABLE IF NOT EXISTS grade_components (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    weight REAL NOT NULL DEFAULT 0.0
-  );
+    CREATE TABLE IF NOT EXISTS grade_components (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      weight REAL NOT NULL DEFAULT 0.0,
+      school_id INTEGER REFERENCES schools(id),
+      UNIQUE(name, school_id)
+    );
 
-  CREATE TABLE IF NOT EXISTS grades (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id INTEGER,
-    subject TEXT NOT NULL,
-    score REAL NOT NULL,
-    date TEXT NOT NULL,
-    teacher_id INTEGER,
-    component_id INTEGER,
-    FOREIGN KEY (student_id) REFERENCES students(id),
-    FOREIGN KEY (teacher_id) REFERENCES users(id),
-    FOREIGN KEY (component_id) REFERENCES grade_components(id)
-  );
+    CREATE TABLE IF NOT EXISTS grades (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER REFERENCES students(id),
+      subject TEXT NOT NULL,
+      score REAL NOT NULL,
+      date TEXT NOT NULL,
+      teacher_id INTEGER REFERENCES users(id),
+      component_id INTEGER REFERENCES grade_components(id),
+      school_id INTEGER REFERENCES schools(id)
+    );
 
-  CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id INTEGER,
-    amount REAL NOT NULL,
-    currency TEXT DEFAULT 'ETB',
-    status TEXT DEFAULT 'pending',
-    tx_ref TEXT UNIQUE,
-    description TEXT,
-    date TEXT NOT NULL,
-    FOREIGN KEY (student_id) REFERENCES students(id)
-  );
+    CREATE TABLE IF NOT EXISTS payments (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER REFERENCES students(id),
+      amount REAL NOT NULL,
+      currency TEXT DEFAULT 'ETB',
+      status TEXT DEFAULT 'pending',
+      tx_ref TEXT UNIQUE,
+      description TEXT,
+      date TEXT NOT NULL,
+      school_id INTEGER REFERENCES schools(id)
+    );
 
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_id INTEGER,
-    receiver_id INTEGER,
-    content TEXT NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sender_id) REFERENCES users(id),
-    FOREIGN KEY (receiver_id) REFERENCES users(id)
-  );
+    CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      sender_id INTEGER REFERENCES users(id),
+      receiver_id INTEGER REFERENCES users(id),
+      content TEXT NOT NULL,
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      school_id INTEGER REFERENCES schools(id)
+    );
 
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-`);
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT NOT NULL,
+      value TEXT,
+      school_id INTEGER REFERENCES schools(id),
+      PRIMARY KEY (key, school_id)
+    );
 
-// Seed Roles
-const roles = ['admin', 'teacher', 'student', 'parent'];
-const insertRole = db.prepare('INSERT OR IGNORE INTO roles (name) VALUES (?)');
-roles.forEach(role => insertRole.run(role));
+    CREATE TABLE IF NOT EXISTS fee_types (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      school_id INTEGER REFERENCES schools(id)
+    );
 
-// Seed Default School
-const schoolExists = db.prepare('SELECT * FROM schools WHERE name = ?').get('Default School');
-let defaultSchoolId: number | bigint;
-if (!schoolExists) {
-  const res = db.prepare('INSERT INTO schools (name) VALUES (?)').run('Default School');
-  defaultSchoolId = res.lastInsertRowid;
-} else {
-  defaultSchoolId = (schoolExists as any).id;
-}
+    CREATE TABLE IF NOT EXISTS student_balances (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER REFERENCES students(id),
+      fee_type_id INTEGER REFERENCES fee_types(id),
+      amount_paid REAL DEFAULT 0,
+      status TEXT DEFAULT 'unpaid' CHECK(status IN ('unpaid', 'partial', 'paid')),
+      school_id INTEGER REFERENCES schools(id)
+    );
+  `);
 
-// Seed Grade Components
-const components = [
-  { name: 'Test', weight: 0.5 },
-  { name: 'Assignment', weight: 0.3 },
-  { name: 'Attendance', weight: 0.2 }
-];
-const insertComponent = db.prepare('INSERT OR IGNORE INTO grade_components (name, weight) VALUES (?, ?)');
-components.forEach(c => insertComponent.run(c.name, c.weight));
+  // Seed Roles
+  const roles = ['admin', 'teacher', 'student', 'parent'];
+  for (const role of roles) {
+    await pool.query('INSERT INTO roles (name) SELECT $1 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = $1)', [role]);
+  }
 
-// Seed Admin if not exists
-const adminExists = db.prepare('SELECT * FROM users WHERE username = ?').get('admin');
-if (!adminExists) {
-  const hashedPassword = bcrypt.hashSync('admin123', 10);
-  const adminRoleId = db.prepare('SELECT id FROM roles WHERE name = ?').get('admin').id;
-  db.prepare('INSERT INTO users (username, password, full_name, role_id, email, school_id) VALUES (?, ?, ?, ?, ?, ?)').run(
-    'admin', hashedPassword, 'System Administrator', adminRoleId, 'admin@school.com', defaultSchoolId
-  );
-}
+  // Seed Default School
+  let defaultSchoolId: number;
+  const schoolRes = await pool.query('SELECT id FROM schools WHERE name = $1', ['Default School']);
+  if (schoolRes.rows.length === 0) {
+    const insertSchool = await pool.query('INSERT INTO schools (name) VALUES ($1) RETURNING id', ['Default School']);
+    defaultSchoolId = insertSchool.rows[0].id;
+  } else {
+    defaultSchoolId = schoolRes.rows[0].id;
+  }
 
-// Seed Students if not exists
-const studentExists = db.prepare('SELECT * FROM users WHERE username = ?').get('student1');
-if (!studentExists) {
-  const studentRoleId = db.prepare('SELECT id FROM roles WHERE name = ?').get('student').id;
-  const hashedPassword = bcrypt.hashSync('student123', 10);
-  
-  const s1 = db.prepare('INSERT INTO users (username, password, full_name, role_id, email, school_id) VALUES (?, ?, ?, ?, ?, ?)').run(
-    'student1', hashedPassword, 'John Doe', studentRoleId, 'john@example.com', defaultSchoolId
-  );
-  db.prepare('INSERT INTO students (user_id, grade_level) VALUES (?, ?)').run(s1.lastInsertRowid, '10A');
+  // Seed Admin
+  const adminRes = await pool.query('SELECT id FROM users WHERE username = $1', ['admin']);
+  if (adminRes.rows.length === 0) {
+    const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || 'ChangeMe@2026';
+    const hashedPassword = bcrypt.hashSync(adminPassword, 10);
+    const roleRes = await pool.query('SELECT id FROM roles WHERE name = $1', ['admin']);
+    const adminRoleId = roleRes.rows[0].id;
+    await pool.query('INSERT INTO users (username, password, full_name, role_id, email, school_id) VALUES ($1, $2, $3, $4, $5, $6)', [
+      'admin', hashedPassword, 'System Administrator', adminRoleId, 'admin@school.com', defaultSchoolId
+    ]);
+  }
 
-  const s2 = db.prepare('INSERT INTO users (username, password, full_name, role_id, email, school_id) VALUES (?, ?, ?, ?, ?, ?)').run(
-    'student2', hashedPassword, 'Jane Smith', studentRoleId, 'jane@example.com', defaultSchoolId
-  );
-  db.prepare('INSERT INTO students (user_id, grade_level) VALUES (?, ?)').run(s2.lastInsertRowid, '10B');
-}
+  logger.info('Database initialized and seeded.');
+};
 
 async function startServer() {
+  await initDB();
   const app = express();
-  
+
   // Trust proxy for rate limiting behind Nginx
   app.set('trust proxy', 1);
 
@@ -179,6 +205,11 @@ async function startServer() {
   app.use(helmet({
     contentSecurityPolicy: false, // Disable CSP for development with Vite
   }));
+
+  // Health Check for Kubernetes
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  });
 
   // Rate Limiting
   const limiter = rateLimit({
@@ -191,17 +222,24 @@ async function startServer() {
   });
   app.use('/api/', limiter);
 
-  app.use(cors());
+  app.use(cors({
+    origin: true,
+    credentials: true
+  }));
   app.use(express.json());
+  app.use(cookieParser());
 
   // Auth Middleware
   const authenticateToken = (req: any, res: any, next: any) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = req.cookies.token || (req.headers['authorization'] && req.headers['authorization'].split(' ')[1]);
+
     if (!token) return res.sendStatus(401);
 
     jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-      if (err) return res.sendStatus(403);
+      if (err) {
+        res.clearCookie('token');
+        return res.sendStatus(403);
+      }
       req.user = user;
       next();
     });
@@ -224,13 +262,25 @@ async function startServer() {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET);
-    res.json({ token, user: { id: user.id, username: user.username, role: user.role, full_name: user.full_name, school_id: user.school_id } });
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role, school_id: user.school_id },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    });
+
+    res.json({ user: { id: user.id, username: user.username, role: user.role, full_name: user.full_name, school_id: user.school_id } });
   });
 
   app.post('/api/auth/signup', (req, res) => {
     const { email, password, full_name, school_name } = req.body;
-    
+
     try {
       db.transaction(() => {
         // 1. Create School
@@ -240,31 +290,47 @@ async function startServer() {
         // 2. Create Admin User for this school
         const hashedPassword = bcrypt.hashSync(password, 10);
         const adminRoleId = db.prepare('SELECT id FROM roles WHERE name = ?').get('admin').id;
-        
+
         // Use email as username for signup
         const userResult = db.prepare('INSERT INTO users (username, password, full_name, role_id, email, school_id) VALUES (?, ?, ?, ?, ?, ?)').run(
           email, hashedPassword, full_name, adminRoleId, email, schoolId
         );
 
-        const token = jwt.sign({ id: userResult.lastInsertRowid, username: email, role: 'admin', school_id: schoolId }, JWT_SECRET);
-        res.json({ 
-          token, 
-          user: { 
-            id: userResult.lastInsertRowid, 
-            username: email, 
-            role: 'admin', 
+        const token = jwt.sign(
+          { id: userResult.lastInsertRowid, username: email, role: 'admin', school_id: schoolId },
+          JWT_SECRET,
+          { expiresIn: '24h' }
+        );
+
+        res.cookie('token', token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          maxAge: 24 * 60 * 60 * 1000
+        });
+
+        res.json({
+          user: {
+            id: userResult.lastInsertRowid,
+            username: email,
+            role: 'admin',
             full_name,
             school_id: schoolId
-          } 
+          }
         });
       })();
     } catch (e: any) {
       if (e.message.includes('UNIQUE constraint failed')) {
         res.status(400).json({ error: 'Email or School Name already exists' });
       } else {
-        res.status(500).json({ error: e.message });
+        res.status(500).json({ error: 'An unexpected error occurred' });
       }
     }
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    res.clearCookie('token');
+    res.json({ success: true });
   });
 
   // Sync endpoint for offline data
@@ -284,19 +350,19 @@ async function startServer() {
       try {
         if (action.type === 'attendance') {
           const { student_id, date, status } = action.data;
-          db.prepare('INSERT INTO attendance (student_id, date, status, teacher_id) VALUES (?, ?, ?, ?)').run(
-            student_id, date, status, req.user.id
+          db.prepare('INSERT INTO attendance (student_id, date, status, teacher_id, school_id) VALUES (?, ?, ?, ?, ?)').run(
+            student_id, date, status, req.user.id, req.user.school_id
           );
           results.push({ status: 'success', action });
         } else if (action.type === 'grade') {
           const { student_id, subject, score, date, component_id } = action.data;
-          db.prepare('INSERT INTO grades (student_id, subject, score, date, teacher_id, component_id) VALUES (?, ?, ?, ?, ?, ?)').run(
-            student_id, subject, score, date, req.user.id, component_id || null
+          db.prepare('INSERT INTO grades (student_id, subject, score, date, teacher_id, component_id, school_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            student_id, subject, score, date, req.user.id, component_id || null, req.user.school_id
           );
           results.push({ status: 'success', action });
         }
       } catch (e: any) {
-        results.push({ status: 'error', error: e.message, action });
+        results.push({ status: 'error', error: 'Database error', action });
       }
     }
 
@@ -313,7 +379,8 @@ async function startServer() {
       JOIN roles r ON u.role_id = r.id
       LEFT JOIN students s ON u.id = s.user_id
       LEFT JOIN teachers t ON u.id = t.user_id
-    `).all();
+      WHERE u.school_id = ?
+    `).all(req.user.school_id);
     res.json(users);
   });
 
@@ -322,7 +389,8 @@ async function startServer() {
       SELECT s.id, u.full_name, s.grade_level, u.username, u.email
       FROM students s
       JOIN users u ON s.user_id = u.id
-    `).all();
+      WHERE u.school_id = ?
+    `).all(req.user.school_id);
     res.json(students);
   });
 
@@ -332,19 +400,19 @@ async function startServer() {
     const roleId = db.prepare('SELECT id FROM roles WHERE name = ?').get(role).id;
     const hashedPassword = bcrypt.hashSync(password, 10);
     try {
-      const result = db.prepare('INSERT INTO users (username, password, full_name, role_id, email, phone) VALUES (?, ?, ?, ?, ?, ?)').run(
-        username, hashedPassword, full_name, roleId, email, phone
+      const result = db.prepare('INSERT INTO users (username, password, full_name, role_id, email, phone, school_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        username, hashedPassword, full_name, roleId, email, phone, req.user.school_id
       );
-      
+
       if (role === 'student') {
         db.prepare('INSERT INTO students (user_id, grade_level) VALUES (?, ?)').run(result.lastInsertRowid, grade_level);
       } else if (role === 'teacher') {
         db.prepare('INSERT INTO teachers (user_id, subject) VALUES (?, ?)').run(result.lastInsertRowid, subject);
       }
-      
+
       res.json({ id: result.lastInsertRowid });
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      res.status(400).json({ error: 'Failed to create user' });
     }
   });
 
@@ -356,10 +424,11 @@ async function startServer() {
       FROM attendance a 
       JOIN students s ON a.student_id = s.id 
       JOIN users u ON s.user_id = u.id
+      WHERE a.school_id = ?
     `;
-    const params = [];
+    const params: any[] = [req.user.school_id];
     if (student_id) {
-      query += ' WHERE a.student_id = ?';
+      query += ' AND a.student_id = ?';
       params.push(student_id);
     }
     const records = db.prepare(query).all(...params);
@@ -370,8 +439,8 @@ async function startServer() {
     if (req.user.role !== 'teacher' && req.user.role !== 'admin') return res.sendStatus(403);
     const { student_id, date, status } = req.body;
     const teacher_id = req.user.id;
-    db.prepare('INSERT INTO attendance (student_id, date, status, teacher_id) VALUES (?, ?, ?, ?)').run(
-      student_id, date, status, teacher_id
+    db.prepare('INSERT INTO attendance (student_id, date, status, teacher_id, school_id) VALUES (?, ?, ?, ?, ?)').run(
+      student_id, date, status, teacher_id, req.user.school_id
     );
     res.json({ success: true });
   });
@@ -384,10 +453,11 @@ async function startServer() {
       FROM grades g 
       JOIN students s ON g.student_id = s.id 
       JOIN users u ON s.user_id = u.id
+      WHERE g.school_id = ?
     `;
-    const params = [];
+    const params: any[] = [req.user.school_id];
     if (student_id) {
-      query += ' WHERE g.student_id = ?';
+      query += ' AND g.student_id = ?';
       params.push(student_id);
     }
     const records = db.prepare(query).all(...params);
@@ -398,8 +468,8 @@ async function startServer() {
     if (req.user.role !== 'teacher' && req.user.role !== 'admin') return res.sendStatus(403);
     const { student_id, subject, score, date, component_id } = req.body;
     const teacher_id = req.user.id;
-    db.prepare('INSERT INTO grades (student_id, subject, score, date, teacher_id, component_id) VALUES (?, ?, ?, ?, ?, ?)').run(
-      student_id, subject, score, date, teacher_id, component_id || null
+    db.prepare('INSERT INTO grades (student_id, subject, score, date, teacher_id, component_id, school_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      student_id, subject, score, date, teacher_id, component_id || null, req.user.school_id
     );
 
     // Notification Logic (Mock Afro Message)
@@ -416,16 +486,16 @@ async function startServer() {
     const { id } = req.params;
     const { score, date, component_id } = req.body;
     try {
-      db.prepare('UPDATE grades SET score = ?, date = ?, component_id = ? WHERE id = ?').run(score, date, component_id, id);
+      db.prepare('UPDATE grades SET score = ?, date = ?, component_id = ? WHERE id = ? AND school_id = ?').run(score, date, component_id, id, req.user.school_id);
       res.json({ success: true });
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      res.status(400).json({ error: 'Failed to update grade' });
     }
   });
 
   // Grade Components
-  app.get('/api/grade-components', authenticateToken, (req, res) => {
-    const components = db.prepare('SELECT * FROM grade_components').all();
+  app.get('/api/grade-components', authenticateToken, (req: any, res) => {
+    const components = db.prepare('SELECT * FROM grade_components WHERE school_id = ?').all(req.user.school_id);
     res.json(components);
   });
 
@@ -433,10 +503,10 @@ async function startServer() {
     if (req.user.role !== 'admin') return res.sendStatus(403);
     const { name, weight } = req.body;
     try {
-      db.prepare('INSERT INTO grade_components (name, weight) VALUES (?, ?)').run(name, weight);
+      db.prepare('INSERT INTO grade_components (name, weight, school_id) VALUES (?, ?, ?)').run(name, weight, req.user.school_id);
       res.json({ success: true });
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      res.status(400).json({ error: 'Failed to add component' });
     }
   });
 
@@ -444,7 +514,7 @@ async function startServer() {
     if (req.user.role !== 'admin') return res.sendStatus(403);
     const { id } = req.params;
     const { weight } = req.body;
-    db.prepare('UPDATE grade_components SET weight = ? WHERE id = ?').run(weight, id);
+    db.prepare('UPDATE grade_components SET weight = ? WHERE id = ? AND school_id = ?').run(weight, id, req.user.school_id);
     res.json({ success: true });
   });
 
@@ -452,10 +522,10 @@ async function startServer() {
     if (req.user.role !== 'admin') return res.sendStatus(403);
     const { id } = req.params;
     try {
-      db.prepare('DELETE FROM grade_components WHERE id = ?').run(id);
+      db.prepare('DELETE FROM grade_components WHERE id = ? AND school_id = ?').run(id, req.user.school_id);
       res.json({ success: true });
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      res.status(400).json({ error: 'Failed to delete component' });
     }
   });
 
@@ -468,9 +538,10 @@ async function startServer() {
       SELECT s.id, u.full_name 
       FROM students s 
       JOIN users u ON s.user_id = u.id
-    `).all() as any[];
+      WHERE u.school_id = ?
+    `).all(req.user.school_id) as any[];
 
-    const weights = db.prepare('SELECT * FROM grade_components').all() as any[];
+    const weights = db.prepare('SELECT * FROM grade_components WHERE school_id = ?').all(req.user.school_id) as any[];
     const attendanceWeight = weights.find(w => w.name.toLowerCase() === 'attendance')?.weight || 0;
 
     const marklist = students.map(student => {
@@ -478,18 +549,18 @@ async function startServer() {
         SELECT g.*, c.name as component_name, c.weight 
         FROM grades g 
         LEFT JOIN grade_components c ON g.component_id = c.id 
-        WHERE g.student_id = ? AND g.subject = ?
-      `).all(student.id, subject) as any[];
+        WHERE g.student_id = ? AND g.subject = ? AND g.school_id = ?
+      `).all(student.id, subject, req.user.school_id) as any[];
 
       // Calculate weighted average for non-attendance components
       let weightedSum = 0;
       let totalWeightUsed = 0;
 
       const componentAverages: any = {};
-      
+
       weights.forEach(w => {
         if (w.name.toLowerCase() === 'attendance') return;
-        
+
         const compGrades = grades.filter(g => g.component_id === w.id);
         if (compGrades.length > 0) {
           const avg = compGrades.reduce((sum, g) => sum + g.score, 0) / compGrades.length;
@@ -505,7 +576,7 @@ async function startServer() {
       const attendance = db.prepare('SELECT status FROM attendance WHERE student_id = ?').all(student.id) as any[];
       const presentCount = attendance.filter(a => a.status === 'present').length;
       const attendanceScore = attendance.length > 0 ? (presentCount / attendance.length) * 100 : 0;
-      
+
       componentAverages['Attendance'] = attendanceScore;
       weightedSum += attendanceScore * attendanceWeight;
       totalWeightUsed += attendanceWeight;
@@ -534,42 +605,129 @@ async function startServer() {
   app.post('/api/payments/initialize', authenticateToken, async (req: any, res) => {
     const { amount, email, first_name, last_name, description } = req.body;
     const tx_ref = `tx-${Date.now()}`;
-    
+
     // Save pending payment to DB
     const student = db.prepare('SELECT id FROM students WHERE user_id = ?').get(req.user.id);
-    if (!student && req.user.role === 'student') {
-        // Handle student not in students table yet
-    }
 
-    db.prepare('INSERT INTO payments (student_id, amount, tx_ref, description, date) VALUES (?, ?, ?, ?, ?)').run(
-      student?.id || null, amount, tx_ref, description, new Date().toISOString()
+    db.prepare('INSERT INTO payments (student_id, amount, tx_ref, description, date, school_id) VALUES (?, ?, ?, ?, ?, ?)').run(
+      student?.id || null, amount, tx_ref, description, new Date().toISOString(), req.user.school_id
     );
 
     // Fetch Chapa API Key from settings
-    const chapaKey = db.prepare('SELECT value FROM settings WHERE key = ?').get('chapa_api_key')?.value;
-    
+    const chapaKey = db.prepare('SELECT value FROM settings WHERE key = ? AND school_id = ?').get('chapa_api_key', req.user.school_id)?.value;
+
     if (!chapaKey) {
-      console.warn('Chapa API Key not configured in settings. Using mock flow.');
+      logger.info('Chapa API Key not configured. Using mock checkout.');
+      return res.json({
+        status: 'success',
+        data: {
+          checkout_url: `https://test.chapa.co/checkout-now/${tx_ref}`
+        }
+      });
     }
 
-    // Real Chapa Integration would go here using chapaKey
-    // For now, return a mock checkout URL
-    res.json({
-      status: 'success',
-      data: {
-        checkout_url: `https://test.chapa.co/checkout-now/${tx_ref}`
-      }
-    });
+    try {
+      const response = await axios.post('https://api.chapa.co/v1/transaction/initialize', {
+        amount,
+        currency: 'ETB',
+        email,
+        first_name,
+        last_name,
+        tx_ref,
+        callback_url: `${process.env.PUBLIC_URL || 'http://localhost:3000'}/api/payments/verify/${tx_ref}`,
+        customization: {
+          title: 'Cortex School Fees',
+          description: description
+        }
+      }, {
+        headers: { Authorization: `Bearer ${chapaKey}` }
+      });
+      res.json(response.data);
+    } catch (err: any) {
+      logger.error('Chapa initialization failed', err.response?.data || err.message);
+      res.status(500).json({ error: 'Payment initialization failed' });
+    }
   });
 
-  app.get('/api/payments/verify/:tx_ref', authenticateToken, (req, res) => {
+  app.get('/api/payments/verify/:tx_ref', authenticateToken, async (req: any, res) => {
     const { tx_ref } = req.params;
-    // Mock verification
-    db.prepare('UPDATE payments SET status = ? WHERE tx_ref = ?').run('success', tx_ref);
-    res.json({ status: 'success', message: 'Payment verified' });
+    const chapaKey = db.prepare('SELECT value FROM settings WHERE key = ? AND school_id = ?').get('chapa_api_key', req.user.school_id)?.value;
+
+    if (!chapaKey) {
+      // Mock verification
+      db.prepare('UPDATE payments SET status = ? WHERE tx_ref = ?').run('success', tx_ref);
+      return res.json({ status: 'success', message: 'Mock payment verified' });
+    }
+
+    try {
+      const response = await axios.get(`https://api.chapa.co/v1/transaction/verify/${tx_ref}`, {
+        headers: { Authorization: `Bearer ${chapaKey}` }
+      });
+
+      if (response.data.status === 'success') {
+        db.prepare('UPDATE payments SET status = ? WHERE tx_ref = ? AND school_id = ?').run('success', tx_ref, req.user.school_id);
+
+        // Update student balance if applicable
+        const payment = db.prepare('SELECT * FROM payments WHERE tx_ref = ?').get(tx_ref);
+        if (payment && payment.student_id) {
+          // Find the most recent unpaid balance (simple logic for now)
+          const balance = db.prepare('SELECT * FROM student_balances WHERE student_id = ? AND status != ? AND school_id = ? LIMIT 1')
+            .get(payment.student_id, 'paid', req.user.school_id);
+
+          if (balance) {
+            const newAmountPaid = (balance.amount_paid || 0) + payment.amount;
+            const feeType = db.prepare('SELECT amount FROM fee_types WHERE id = ?').get(balance.fee_type_id);
+            const newStatus = newAmountPaid >= feeType.amount ? 'paid' : 'partial';
+
+            db.prepare('UPDATE student_balances SET amount_paid = ?, status = ? WHERE id = ?')
+              .run(newAmountPaid, newStatus, balance.id);
+          }
+        }
+
+        res.json({ status: 'success', message: 'Payment verified successfully' });
+      } else {
+        res.status(400).json({ status: 'failed', message: 'Payment verification failed' });
+      }
+    } catch (err: any) {
+      logger.error('Chapa verification failed', err.response?.data || err.message);
+      res.status(500).json({ error: 'Verification error' });
+    }
   });
 
-  // Messaging
+  // Fee Management
+  app.get('/api/fee-types', authenticateToken, (req: any, res) => {
+    const types = db.prepare('SELECT * FROM fee_types WHERE school_id = ?').all(req.user.school_id);
+    res.json(types);
+  });
+
+  app.post('/api/fee-types', authenticateToken, (req: any, res) => {
+    if (req.user.role !== 'admin') return res.sendStatus(403);
+    const { name, amount } = req.body;
+    db.prepare('INSERT INTO fee_types (name, amount, school_id) VALUES (?, ?, ?)').run(name, amount, req.user.school_id);
+    res.json({ success: true });
+  });
+
+  app.get('/api/student-balances', authenticateToken, (req: any, res) => {
+    const sid = req.user.school_id;
+    let query = `
+      SELECT sb.*, ft.name as fee_name, ft.amount as total_amount, u.full_name as student_name
+      FROM student_balances sb
+      JOIN fee_types ft ON sb.fee_type_id = ft.id
+      JOIN students s ON sb.student_id = s.id
+      JOIN users u ON s.user_id = u.id
+      WHERE sb.school_id = ?
+    `;
+    const params = [sid];
+
+    if (req.user.role === 'student') {
+      const student = db.prepare('SELECT id FROM students WHERE user_id = ?').get(req.user.id);
+      query += ` AND sb.student_id = ?`;
+      params.push(student.id);
+    }
+
+    const balances = db.prepare(query).all(...params);
+    res.json(balances);
+  });
   app.get('/api/messages', authenticateToken, (req: any, res) => {
     const userId = req.user.id;
     const messages = db.prepare(`
@@ -577,24 +735,24 @@ async function startServer() {
       FROM messages m 
       JOIN users u1 ON m.sender_id = u1.id 
       JOIN users u2 ON m.receiver_id = u2.id 
-      WHERE m.sender_id = ? OR m.receiver_id = ?
+      WHERE (m.sender_id = ? OR m.receiver_id = ?) AND m.school_id = ?
       ORDER BY m.timestamp DESC
-    `).all(userId, userId);
+    `).all(userId, userId, req.user.school_id);
     res.json(messages);
   });
 
   app.post('/api/messages', authenticateToken, (req: any, res) => {
     const { receiver_id, content } = req.body;
     const sender_id = req.user.id;
-    db.prepare('INSERT INTO messages (sender_id, receiver_id, content) VALUES (?, ?, ?)')
-      .run(sender_id, receiver_id, content);
+    db.prepare('INSERT INTO messages (sender_id, receiver_id, content, school_id) VALUES (?, ?, ?, ?)')
+      .run(sender_id, receiver_id, content, req.user.school_id);
     res.json({ success: true });
   });
 
   // Settings
   app.get('/api/settings', authenticateToken, (req: any, res) => {
     if (req.user.role !== 'admin') return res.sendStatus(403);
-    const settings = db.prepare('SELECT * FROM settings').all();
+    const settings = db.prepare('SELECT * FROM settings WHERE school_id = ?').all(req.user.school_id);
     const settingsMap = settings.reduce((acc: any, curr: any) => {
       acc[curr.key] = curr.value;
       return acc;
@@ -606,7 +764,7 @@ async function startServer() {
     if (req.user.role !== 'admin') return res.sendStatus(403);
     const { chapa_api_key } = req.body;
     if (chapa_api_key !== undefined) {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('chapa_api_key', chapa_api_key);
+      db.prepare('INSERT OR REPLACE INTO settings (key, value, school_id) VALUES (?, ?, ?)').run('chapa_api_key', chapa_api_key, req.user.school_id);
     }
     res.json({ success: true });
   });
@@ -614,11 +772,12 @@ async function startServer() {
   // Analytics/Reports
   app.get('/api/reports/summary', authenticateToken, (req: any, res) => {
     if (req.user.role !== 'admin') return res.sendStatus(403);
-    
-    const totalStudents = db.prepare('SELECT COUNT(*) as count FROM students').get().count;
-    const totalTeachers = db.prepare("SELECT COUNT(*) as count FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'teacher'").get().count;
-    const totalRevenue = db.prepare("SELECT SUM(amount) as total FROM payments WHERE status = 'success'").get().total || 0;
-    const averageGrade = db.prepare('SELECT AVG(score) as avg FROM grades').get().avg || 0;
+
+    const sid = req.user.school_id;
+    const totalStudents = db.prepare('SELECT COUNT(*) as count FROM students s JOIN users u ON s.user_id = u.id WHERE u.school_id = ?').get(sid).count;
+    const totalTeachers = db.prepare("SELECT COUNT(*) as count FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = 'teacher' AND u.school_id = ?").get(sid).count;
+    const totalRevenue = db.prepare("SELECT SUM(amount) as total FROM payments WHERE status = 'success' AND school_id = ?").get(sid).total || 0;
+    const averageGrade = db.prepare('SELECT AVG(score) as avg FROM grades WHERE school_id = ?').get(sid).avg || 0;
 
     res.json({
       totalStudents,

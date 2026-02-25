@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-deployment
+  labels:
+    app: cortex
+spec:
+  replicas: 1 # SQLite works best with 1 replica to avoid file locking
+  selector:
+    matchLabels:
+      app: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex
+    spec:
+      containers:
+        - name: cortex
+          image: cortex-app:latest # Replace with your actual image tag
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cortex-secrets
+                  key: JWT_SECRET
+            - name: INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cortex-secrets
+                  key: INITIAL_ADMIN_PASSWORD
+            - name: DB_PATH
+              value: "/app/data/school.db"
+          volumeMounts:
+            - name: cortex-db-storage
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: cortex-db-storage
+          persistentVolumeClaim:
+            claimName: cortex-db-pvc

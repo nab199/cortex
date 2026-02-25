@@ -1,0 +1,13 @@
+services:
+  cortex:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./school.db:/app/school.db
+      - ./logs:/app/logs
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
+      - NODE_ENV=production
+    restart: always
