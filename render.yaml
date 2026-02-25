@@ -1,0 +1,56 @@
+# Render Blueprint — Cortex Backend
+# Deploy this file to render.com via "New Blueprint" → Connect your GitHub repo
+
+services:
+  - type: web
+    name: cortex-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    branch: main
+    healthCheckPath: /api/health
+
+    # Auto-deploy on every push to main
+    autoDeploy: true
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: PORT
+        value: 3000
+
+      # Injected automatically by Render when linked to the database below
+      - key: DB_URL
+        fromDatabase:
+          name: cortex-db
+          property: connectionString
+
+      # Set these manually in Render dashboard → Environment
+      - key: JWT_SECRET
+        sync: false
+
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false
+
+      - key: GEMINI_API_KEY
+        sync: false
+
+      - key: AFRO_MESSAGE_API_KEY
+        sync: false
+
+      - key: AFRO_MESSAGE_SENDER_ID
+        value: cortex
+
+      # Your Vercel frontend URL — e.g. https://cortex.vercel.app
+      - key: FRONTEND_URL
+        sync: false
+
+databases:
+  - name: cortex-db
+    plan: free
+    databaseName: cortex_db
+    user: cortex_user
+    region: oregon
+    ipAllowList: []  # Allow all connections (needed for Render web service)

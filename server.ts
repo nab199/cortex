@@ -222,8 +222,13 @@ async function startServer() {
   });
   app.use('/api/', limiter);
 
+  // Allow Vercel frontend in production, permissive in dev
+  const allowedOrigins = process.env.FRONTEND_URL
+    ? [process.env.FRONTEND_URL, 'http://localhost:5173']
+    : true;
+
   app.use(cors({
-    origin: true,
+    origin: allowedOrigins,
     credentials: true
   }));
   app.use(express.json());
