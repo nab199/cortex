@@ -47,6 +47,7 @@ import {
   Line,
   Legend
 } from 'recharts';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 const API_BASE = '/api';
 
@@ -172,7 +173,12 @@ export default function App() {
     }
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center">Loading...</div>;
+  if (loading) return (
+    <>
+      <div className="h-screen flex items-center justify-center">Loading...</div>
+      <SpeedInsights />
+    </>
+  );
 
   if (!user) {
     return (
@@ -298,6 +304,7 @@ export default function App() {
             {/* Default credentials disclosure removed for security */}
           </div>
         </motion.div>
+        <SpeedInsights />
       </div>
     );
   }
@@ -364,6 +371,7 @@ export default function App() {
           {activeTab === 'admin' && <AdminView user={user} />}
         </AnimatePresence>
       </main>
+      <SpeedInsights />
     </div>
   );
 }
