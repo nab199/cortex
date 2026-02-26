@@ -28,6 +28,7 @@ import {
   X,
   LineChart as LineChartIcon
 } from 'lucide-react';
+import SendSmsButton from './components/SendSmsButton';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sidebar, Card, StatCard, User, ThemeToggle, Button, DataTable } from './components/UI';
 import { offlineService } from './services/offlineService';
@@ -1639,14 +1640,17 @@ function PaymentsView({ user }: { user: User }) {
           <p className="text-muted-foreground text-sm font-medium">Track payments and fee status</p>
         </div>
         {user.role === 'student' && (
-          <Button
-            onClick={handlePay}
-            disabled={loading}
-            className="flex items-center gap-2"
-          >
-            <CreditCard className="w-4 h-4" />
-            {loading ? 'Processing...' : 'Pay Tuition Fee'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handlePay}
+              disabled={loading}
+              className="flex items-center gap-2"
+            >
+              <CreditCard className="w-4 h-4" />
+              {loading ? 'Processing...' : 'Pay Tuition Fee'}
+            </Button>
+            <SendSmsButton to={user.phone || '+251900000000'} studentName={user.full_name} amount={5000} />
+          </div>
         )}
       </div>
 
