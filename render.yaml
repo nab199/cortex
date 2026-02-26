@@ -21,11 +21,10 @@ services:
       - key: PORT
         value: 3000
 
-      # Injected automatically by Render when linked to the database below
+      # Your Neon PostgreSQL connection string — set manually in Render dashboard → Environment
+      # Format: postgresql://<user>:<password>@<host>.neon.tech/<dbname>?sslmode=require
       - key: DB_URL
-        fromDatabase:
-          name: cortex-db
-          property: connectionString
+        sync: false
 
       # Set these manually in Render dashboard → Environment
       - key: JWT_SECRET
@@ -43,14 +42,6 @@ services:
       - key: AFRO_MESSAGE_SENDER_ID
         value: cortex
 
-      # Your Vercel frontend URL — e.g. https://cortex.vercel.app
+      # Your Netlify frontend URL — e.g. https://cortex.netlify.app
       - key: FRONTEND_URL
         sync: false
-
-databases:
-  - name: cortex-db
-    plan: free
-    databaseName: cortex_db
-    user: cortex_user
-    region: oregon
-    ipAllowList: []  # Allow all connections (needed for Render web service)
