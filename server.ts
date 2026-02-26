@@ -12,7 +12,7 @@ import axios from 'axios';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
-import { SMSService } from './src/services/SMSService';
+import smsRoutes from './src/routes/smsRoutes';
 
 if (!process.env.JWT_SECRET) {
   console.error('CRITICAL: JWT_SECRET is not defined in environment variables.');
@@ -755,36 +755,8 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // SMS Endpoints
-  app.post('/api/send-fee-reminder', authenticateToken, async (req: any, res) => {
-    const { to, studentName, amount } = req.body;
-    if (!to || !studentName || amount === undefined) {
-      return res.status(400).json({ error: 'Missing required fields: to, studentName, amount' });
-    }
-
-    try {
-      const result = await SMSService.sendFeeReminder(to, studentName, Number(amount));
-      res.json({ success: true, result });
-    } catch (err: any) {
-      logger.error('Failed to send fee reminder', err?.response?.data || err?.message || err);
-      res.status(500).json({ error: 'Failed to send SMS' });
-    }
-  });
-
-  app.post('/api/send-absence-alert', authenticateToken, async (req: any, res) => {
-    const { to, studentName, date } = req.body;
-    if (!to || !studentName || !date) {
-      return res.status(400).json({ error: 'Missing required fields: to, studentName, date' });
-    }
-
-    try {
-      const result = await SMSService.sendAbsenceAlert(to, studentName, date);
-      res.json({ success: true, result });
-    } catch (err: any) {
-      logger.error('Failed to send absence alert', err?.response?.data || err?.message || err);
-      res.status(500).json({ error: 'Failed to send SMS' });
-    }
-  });
+  // Mount SMS routes under /api/sms
+  app.use('/api/sms', authenticateToken, smsRoutes);
 
   // Settings
   app.get('/api/settings', authenticateToken, (req: any, res) => {
