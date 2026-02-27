@@ -12,7 +12,7 @@ import axios from 'axios';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
-import smsRoutes from './routes/smsRoutes';
+import smsRoutes from './src/routes/smsRoutes';
 
 if (!process.env.JWT_SECRET) {
   console.error('CRITICAL: JWT_SECRET is not defined in environment variables.');
