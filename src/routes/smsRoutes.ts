@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import smsRoutes from '.src/routes/smsRoutes.ts';
+import smsRoutes from './src/routes/smsRoutes.ts';
 
 const router = Router();
 
