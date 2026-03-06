@@ -22,7 +22,6 @@ import settingsRoutes from './src/routes/settings.ts';
 import reportRoutes from './src/routes/reports.ts';
 import schoolsRoutes from './src/routes/schools.ts';
 import smsRoutes from './src/routes/smsRoutes.ts';
-
 if (!process.env.JWT_SECRET) {
   console.error('CRITICAL: JWT_SECRET is not defined in environment variables.');
   process.exit(1);
