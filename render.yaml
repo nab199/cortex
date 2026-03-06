@@ -1,4 +1,4 @@
-# Render Blueprint — Cortex Backend
+# Render Blueprint — Cortex Full Stack
 # Deploy this file to render.com via "New Blueprint" → Connect your GitHub repo
 
 services:
@@ -42,6 +42,22 @@ services:
       - key: AFRO_MESSAGE_SENDER_ID
         value: cortex
 
-      # Your Netlify frontend URL — e.g. https://cortex.netlify.app
+      # Your Render frontend URL — will be set after deployment
       - key: FRONTEND_URL
         sync: false
+
+  - type: web
+    name: cortex-frontend
+    runtime: static
+    buildCommand: npm run build
+    staticPublishPath: ./dist
+    plan: free
+    region: oregon
+    branch: main
+
+    # Auto-deploy on every push to main
+    autoDeploy: true
+
+    envVars:
+      - key: NODE_ENV
+        value: production
