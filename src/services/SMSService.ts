@@ -25,7 +25,8 @@ export class SMSService {
             });
             return response.data;
         } catch (error: any) {
-            console.error('SMS Error:', error.response?.data || error.message);
+            // Log only the error message, not sensitive response data
+            console.error('SMS Error:', error.message || 'Unknown error');
             throw error;
         }
     }

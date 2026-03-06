@@ -1,43 +1,18 @@
-const CACHE_NAME = 'cortex-v1';
-const ASSETS = [
-    '/',
-    '/index.html',
-    '/favicon.png',
-    '/manifest.webmanifest'
-];
-
-// Install Event
-self.addEventListener('install', (event) => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            return cache.addAll(ASSETS);
-        })
-    );
+self.addEventListener('install', (e) => {
+    self.skipWaiting();
 });
 
-// Activate Event
-self.addEventListener('activate', (event) => {
-    event.waitUntil(
-        caches.keys().then((keys) => {
+self.addEventListener('activate', (e) => {
+    e.waitUntil(
+        caches.keys().then((cacheNames) => {
             return Promise.all(
-                keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+                cacheNames.map((cacheName) => caches.delete(cacheName))
             );
         })
     );
+    self.registration.unregister();
 });
 
-// Fetch Event
-self.addEventListener('fetch', (event) => {
-    const req = event.request;
-
-    // Skip API calls from standard caching, let offlineService handle them
-    if (req.url.includes('/api/')) {
-        return;
-    }
-
-    event.respondWith(
-        caches.match(req).then((cachedResponse) => {
-            return cachedResponse || fetch(req);
-        })
-    );
+self.addEventListener('fetch', (e) => {
+    // Pass through
 });

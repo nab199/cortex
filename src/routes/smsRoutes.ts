@@ -1,5 +1,5 @@
-import Router from 'express';
-import smsRoutes from './src/routes/smsRoutes.ts';
+import { Router } from 'express';
+import { SMSService } from '../services/SMSService.ts';
 
 const router = Router();
 
@@ -13,7 +13,8 @@ router.post('/send-fee-reminder', async (req: any, res: any) => {
     const result = await SMSService.sendFeeReminder(to, studentName, Number(amount));
     res.json({ success: true, result });
   } catch (err: any) {
-    console.error('SMS route error (fee reminder):', err?.response?.data || err?.message || err);
+    // Log only error message, not response data which may contain secrets
+    console.error('SMS route error (fee reminder):', err?.message || 'Unknown error');
     res.status(500).json({ error: 'Failed to send SMS' });
   }
 });
@@ -28,7 +29,8 @@ router.post('/send-absence-alert', async (req: any, res: any) => {
     const result = await SMSService.sendAbsenceAlert(to, studentName, date);
     res.json({ success: true, result });
   } catch (err: any) {
-    console.error('SMS route error (absence alert):', err?.response?.data || err?.message || err);
+    // Log only error message, not response data which may contain secrets
+    console.error('SMS route error (absence alert):', err?.message || 'Unknown error');
     res.status(500).json({ error: 'Failed to send SMS' });
   }
 });

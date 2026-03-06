@@ -69,7 +69,8 @@ export const offlineService = {
         return data;
       }
     } catch (err) {
-      console.error('Sync failed', err);
+      // Log only the error message, not the full error object which may contain sensitive data
+      console.error('Sync failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 };

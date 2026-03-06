@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Users,
+  users,
   BookOpen,
   Calendar,
   CreditCard,
@@ -18,7 +18,7 @@ import {
   Moon,
   Table
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // --- Types ---
 export interface User {
@@ -27,6 +27,7 @@ export interface User {
   role: 'admin' | 'teacher' | 'student' | 'parent';
   full_name: string;
   email?: string;
+  phone?: string;
 }
 
 // --- Components ---
@@ -34,7 +35,7 @@ export interface User {
 export const Sidebar = ({ activeTab, setActiveTab, user, onLogout }: {
   activeTab: string,
   setActiveTab: (tab: string) => void,
-  user: User,
+  user: User | null,
   onLogout: () => void
 }) => {
   const menuItems = [
@@ -47,7 +48,7 @@ export const Sidebar = ({ activeTab, setActiveTab, user, onLogout }: {
     { id: 'admin', label: 'Admin Panel', icon: UserPlus, roles: ['admin'] },
   ];
 
-  const filteredItems = menuItems.filter(item => item.roles.includes(user.role));
+  const filteredItems = menuItems.filter(item => item.roles.includes(user?.role || 'student'));
 
   return (
     <div className="w-64 bg-slate-950 text-white h-screen flex flex-col border-r border-slate-800 transition-colors duration-300">
@@ -82,11 +83,11 @@ export const Sidebar = ({ activeTab, setActiveTab, user, onLogout }: {
       <div className="p-4 border-t border-slate-800">
         <div className="flex items-center gap-3 mb-4 px-2">
           <div className="w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center text-white font-bold">
-            {user.full_name.charAt(0)}
+            {user?.full_name?.charAt(0) || 'U'}
           </div>
           <div className="overflow-hidden">
-            <p className="text-sm font-semibold truncate">{user.full_name}</p>
-            <p className="text-xs text-slate-500 capitalize">{user.role}</p>
+            <p className="text-sm font-semibold truncate">{user?.full_name || 'Guest'}</p>
+            <p className="text-xs text-slate-500 capitalize">{user?.role || 'guest'}</p>
           </div>
         </div>
         <button

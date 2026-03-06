@@ -1,9 +1,6 @@
-@import "tailwindcss";
-
-@theme {
-  --color-brand-primary: var(--brand-primary);
-  --color-brand-secondary: var(--brand-secondary);
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
   --background: 0 0% 100%;
@@ -16,7 +13,7 @@
   --popover-foreground: 222.2 84% 4.9%;
 
   --brand-primary: #10b981;
-  --brand-secondary: #0f172a;
+  --brand-secondary: #000000;
 
   --primary: 222.2 47.4% 11.2%;
   --primary-foreground: 210 40% 98%;
@@ -74,6 +71,7 @@
   * {
     border-color: hsl(var(--border));
   }
+
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
@@ -82,7 +80,7 @@
 }
 
 .glass {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -98,6 +96,13 @@
 }
 
 @keyframes animate-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
